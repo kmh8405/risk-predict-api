@@ -1,9 +1,12 @@
-from fastapi import APIRouter, status, Depends, HTTPException
+from fastapi import APIRouter, status, Depends, HTTPException, Body
+from fastapi.security import HTTPBearer
 from sqlalchemy import select
+
+from auth.jwt import create_access_token, verify_user
 from auth.password import hash_password, verify_password
 from database.connection import get_session
-from user.models import User
-from user.request import SignUpRequest, LoginRequest
+from user.models import User, HealthProfile
+from user.request import SignUpRequest, LoginRequest, HealthProfileRequest
 from user.response import UserResponse
 
 
@@ -63,7 +66,7 @@ async def login_handler(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="등록되지 않은 이메일입니다.",
+            detail="이메일과 비밀번호가 잘못되었습니다.",
         )
 
     # 3) body.password <> 사용자.password_hash 비교 검증
@@ -74,9 +77,46 @@ async def login_handler(
     if not verified:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="비밀번호가 일치하지 않습니다.",
+            detail="이메일과 비밀번호가 잘못되었습니다.",
         )
 
     # 4) JWT(JSON Web Token)토큰 발급
-    
-    return
+    access_token = create_access_token(user_id=user.id)
+    return {"access_token": access_token}
+
+@router.post(
+    "/health-profiles",
+    summary="건강 프로필 생성 API",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_health_profile_handler(
+    # 클라이언트가 보낸 Authorization Header를 읽어줌
+    user_id = Depends(verify_user),
+    body: HealthProfileRequest = Body(...),
+    session = Depends(get_session),
+):
+    # 1) 건강 프로필 데이터 입력
+    stmt = (
+        select(HealthProfile)
+        .where(HealthProfile.user_id == user_id)
+    )
+
+    # 2) 건강 프로필 중복 검사
+    result = await session.execute(stmt)
+    existing_profile = result.scalar()
+    if existing_profile:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이미 건강 프로필이 존재합니다.",
+        )
+
+    # 3) 건강 프로필 생성 & 저장
+    profile_data: dict = body.model_dump()
+    new_profile = HealthProfile(user_id=user_id, **profile_data)
+
+    session.add(new_profile)
+    await session.commit()
+    await session.refresh(new_profile)
+
+    # 4) 응답
+    return new_profile

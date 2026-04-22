@@ -4,3 +4,6 @@ sqlalchemy
 aiosqlite
 bcrypt
 pydantic
+pydantic-settings
+PyJWT
+openai
